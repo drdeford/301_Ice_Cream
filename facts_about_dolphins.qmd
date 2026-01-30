@@ -1,0 +1,404 @@
+---
+title: "Inference in R"
+author: "Math 242"
+format: pdf
+---
+
+## Introduction
+
+This Quarto file explores the procedures for doing inference in R. We will perform some of the straightforward testing examples using the tests from the base-R library but also use the infer package for some additional simulation-based approaches and visualizations. Throughout we will use the penguins dataset as a running example. 
+
+### Load Packages and Data
+
+We'll start as usual by loading in our packages and data, removing the penguins with missing data from the dataset. 
+
+```{r packages_and_data, warning=FALSE}
+library(tidyverse)
+library(infer)
+
+data(penguins)
+
+penguins <- drop_na(penguins)
+```
+
+## Single proportion
+
+Just as a review of the basic syntax, we'll do a test of the proportion female vs. male penguins in the dataset. Our observed statistic will be $\hat{p}$, the proportion of penguins in our sample that is female: 
+
+```{r phat}
+
+p_hat <- penguins %>%
+  specify(response = sex, success = "female") %>%
+  calculate(stat = "prop")
+
+p_hat
+```
+The syntax above is common to all of the infer examples, where we will use specify to denote our target columns of interest. In this case we just have a single column as the response but in later cases we may instead provide an equation to describe a relationship we expect to see or test. The calculate function computes our desired statistic. For this case it is the proportion but for later examples it may be the mean or F statistic. Our observed value is close to what we would likely hypothesize (.5) but we can make a statistical comparison by generating a null distribution: 
+
+
+```{r phat_sample}
+
+null_dist <- penguins %>%
+  specify(response = sex, success = "female") %>%
+  hypothesize(null = "point", p = .5) %>%
+  generate(reps = 1000, type="draw") %>%
+  calculate(stat = "prop")
+
+
+```
+
+The syntax here is also similar to what we will see in the other examples. The specify command is the same as above but now we specify the hypothesis that we'd like to evaluate (that the population probability is .5) and then use the generate command to actually perform the process of flipping a fair coin for each penguin 1000 times. The calculate line tells R to compute the proportion of female labeled penguins after each set of flips.  Next we will compute the p_value for this simulated distribution with the get_p_value function, whose arguments are hopefully self-explanatory: 
+
+```{r pval_phat}
+
+null_dist %>%
+  get_p_value(obs_stat = p_hat, direction = "two-sided")
+
+```
+
+We get a p-value of .886, which shouldn't be too surprising given how close our observed value was to .5. Thus, we will fail to reject the null hypothesis that the population proption of female penguins is .5. We can wrap things up by visualizing our value compared to the null distribution we generated, again using syntax that will be common across the examples: 
+
+```{r vis_phat}
+
+visualize(null_dist) +
+  shade_p_value(obs_stat = p_hat, direction = "two-sided")
+
+```
+
+What if we wanted to construct a 95% confidence interval? The code setup is very similar but we won't use the hypothesize function to assume that p=.5. Instead, we will do bootstrap sampling of our data to generate the comparison distribution, replacing the type="draw" with type="bootstrap" in the generate function to tell R to sample with replacement instead of flipping independent coins: 
+
+```{r phat_CI}
+
+boot_dist <- penguins %>%
+ specify(response = sex, success = "female") %>%
+ generate(reps = 1000, type = "bootstrap") %>%
+ calculate(stat = "prop")
+
+```
+
+Just like with p_values, there is a helpful get_ci function we can apply to this distribution to extract the endpoints of our interval: 
+
+```{r phatCI2}
+percentile_ci <- get_ci(boot_dist,level=.80)
+percentile_ci
+```
+so we are 95% confident that the true population means lies between 44% and 55%. We can also visualize the CI, using a similar set of functions: 
+
+```{r phat_CI_viz}
+visualize(boot_dist) +
+  shade_confidence_interval(endpoints = percentile_ci)
+
+```
+
+Which does look like it contains 95% of the bootstrapped samples. If we wanted the same results from the base-R prop.test we could do something like the below to get the same answer: 
+
+```{r prop_test}
+
+prop.test(sum(penguins$sex=="female"), 333, p = .5,
+          alternative ="two.sided",
+          conf.level = 0.95)
+
+```
+
+## Single Mean
+
+We'll next look at the mean of the body_mass variable for our sample. A quick google suggests that the average weight of an adult (non-emperor) penguin is 3,300 grams, so we'll use that as our comparison. We'll start by visualizing the data just to make sure this isn't a completely untenable comparison: 
+
+```{r penguin_viz}
+
+ggplot(penguins,aes(x=body_mass)) + geom_histogram(binwidth=200)
+
+
+```
+
+In this case our test statistic is average (mean) of the body_mass measurement of each penguin. The setup is almost exactly the same as for proportions, except we replace prop with mean for our statistic: 
+
+```{r mean_stat}
+
+x_bar <- penguins %>%
+  specify(response = body_mass) %>%
+  calculate(stat = "mean")
+
+x_bar
+
+
+```
+
+That average is larger than our expected mean but is it statistically discernibly larger? Let's find out by simulation, again repeating the code from above: 
+
+```{r xbar_sim}
+
+null_dist <- penguins %>%
+  specify(response = body_mass) %>%
+  hypothesize(null = "point", mu = 3300) %>%
+  generate(reps = 1000,type = "bootstrap") %>%
+  calculate(stat = "mean")
+
+
+```
+Remember that if we were doing this by hand we would need to shift the mean of the distribution before resampling. Computing the p-value and visualizing work exactly as we'd expect from the previous example: 
+
+```{r xbar_pval}
+null_dist %>%
+  get_p_value(obs_stat = x_bar, direction = "two-sided")
+
+visualize(null_dist)
+
+visualize(null_dist) +
+  shade_p_value(obs_stat = x_bar, direction = "two-sided")
+```
+
+The p-value here isn't surprising, since the google mean was far away from the bulk of our data. Confidence intervals will also work the same as the proportion case, swapping out the hypothesis argument before generating: 
+
+```{r mean_CI}
+
+boot_dist <- penguins %>%
+ specify(response = body_mass) %>%
+ generate(reps = 1000, type = "bootstrap") %>%
+ calculate(stat = "mean")
+
+percentile_ci <- get_ci(boot_dist,level=.95)
+percentile_ci
+
+visualize(boot_dist)
+
+visualize(boot_dist) +
+  shade_confidence_interval(endpoints = percentile_ci)
+
+```
+
+If we want to perform the same test in R we can use the t.test function to get a similarly unsurprising result: 
+
+```{r ttest}
+t.test(penguins$body_mass,mu=3300)
+
+```
+
+## Regression
+
+We'll use this dataset as one of our key examples of regression early on in the class, so we'll get pretty familiar with the relationships: 
+
+```{r pairs}
+
+pairs(penguins[,3:6])
+
+```
+
+We'll focus on the relationship between flipper length and body mass, although I encourage you to explore the other pairs on your own. To start, we'll compute the slope that corresponds to our observed data, specifying the relationship of interest, just like we would in lm():
+
+```{r observed_slope}
+
+slope_hat <- penguins %>%
+  specify(body_mass ~ flipper_len) %>%
+  calculate(stat = "slope")
+
+```
+
+Next we'll generate a null distribution under the hypothesis of indendence, shuffling the flipper_values against the body_masses: 
+
+```{r slope_shuffle}
+
+null_dist <- penguins %>%
+      specify(body_mass ~ flipper_len) %>%
+      hypothesize(null = "independence") %>%
+      generate(reps = 1000, type = "permute") %>%
+      calculate(stat = "slope")
+
+```
+
+Now that we have the null distribution we can compute the corresponding p-value and visualize just how unlikely our variables are to be unrelated: 
+
+```{r slope_p}
+
+null_dist %>%
+  get_p_value(obs_stat = slope_hat, direction = "two-sided")
+
+
+
+visualize(null_dist) +
+     shade_p_value(obs_stat = slope_hat, direction = "two-sided")
+
+
+
+```
+
+No surprise at all that we get a p-value of 0 for the simulated version. We can also do a bootstrap version to get a confidence interval by resampling the datapoints, once again removing the hypothesis and replace permute with bootstrap:  
+
+```{r slope_CI}
+
+boot_dist <- penguins %>%
+      specify(body_mass ~ flipper_len) %>%
+      generate(reps = 1000, type = "bootstrap") %>%
+      calculate(stat = "slope")
+
+percentile_ci <- get_ci(boot_dist,level=.95)
+percentile_ci
+
+visualize(boot_dist)
+
+visualize(boot_dist)+
+  shade_confidence_interval(endpoints = percentile_ci)
+
+```
+
+So we are 95% confident that the true coefficient is between 47 and 53. If we compare the results to what we get using the lm() function, we see that we have a very similar result: 
+
+```{r slope_lm}
+
+penguin_model <- lm(body_mass ~ flipper_len, data=penguins)
+
+summary(penguin_model)
+
+```
+## Chi-Squared Test
+
+Next up we'll evaluate a two-way table, looking at the relationship between island and species (you might test this out on your own looking at species and sex, although the answer is pretty clear either way). 
+
+
+```{r table2}
+
+penguins %>%
+  count(species,island)
+
+penguins %>%
+  count(species,island) %>%
+  ggplot(aes(x=island,fill=species,y=n)) +    geom_bar(position="dodge", stat="identity")
+
+
+penguins %>%
+  count(species,island) %>%
+  ggplot(aes(fill=island,x=species,y=n)) +    geom_bar(position="dodge", stat="identity")
+
+  
+
+```
+Next we'll compute the Chi square statistic under the assumption of independence for our observed data. The enormous value means it is quite likley that we'll reject the null here. 
+
+```{r obs_C}
+
+observedC <- penguins %>%
+specify(species ~ island) %>%
+hypothesize(null = "independence") %>%
+calculate(stat = "Chisq")
+observedC
+
+```
+
+We can construct a null distribution by permuting the labels under the assumption of independence and use this to compare to our observed value, computing the Chi square statistic for each experiment.  
+
+```{r sim_chi}
+
+null_dist_sim <- penguins %>%
+specify(species ~ island) %>%
+hypothesize(null = "independence") %>%
+generate(reps = 1000, type = "permute") %>%
+calculate(stat = "Chisq")
+
+```
+
+Now that we have a sampling distribution to compare to, we can evaluate our original observation. 
+
+```{r viz_p}
+
+null_dist_sim %>%
+visualize()
+
+
+pval_sim <- null_dist_sim %>%
+get_p_value(obs_stat = observedC, direction = "greater")
+```
+
+We can also use  the mathematical model approach, comparing to the actual chi-square distribution, which in this case returns a very similar answer.  
+
+```{r chi_model}
+
+null_dist_theory <- penguins %>%
+specify(island ~ species) %>%
+assume(distribution = "Chisq")
+
+null_dist_theory %>%
+visualize() +
+shade_p_value(observedC, direction = "greater")
+
+pval_theory <- pchisq(observedC$stat, df=2, lower.tail = FALSE)
+pval_theory
+
+```
+
+## ANOVA
+
+Finally, we'll take a look at ANOVA, comparing penguin body mass to species, island, and year. We'll start by making some relevant side by side boxplots to compare the variances: 
+
+```{r penguins}
+
+ggplot(penguins,aes(y=body_mass,fill=species)) + geom_boxplot()
+
+ggplot(penguins,aes(y=body_mass,fill=island)) + geom_boxplot()
+
+ggplot(penguins,aes(y=body_mass,fill=as.factor(year))) + geom_boxplot()
+
+
+
+
+```
+Just as with the examples above, we'll start by computing the statistic for our observed data and then do permutation simulation under the null hypothesis of independence for comparison. Since we have multiple means we are using the F statistic as our measurement of the data and the simulations. 
+
+
+
+```{r simulation}
+observed_f <- penguins |>
+specify(body_mass ~ species) |>
+hypothesize(null = "independence") |>
+calculate(stat = "F")
+# Generating the null distribution using randomization
+
+null_dist <- penguins |>
+specify(body_mass  ~ species) |>
+hypothesize(null = "independence") |>
+generate(reps = 5000, type = "permute") |>
+calculate(stat = "F")
+
+# Randomization-based p-value
+null_dist |> get_p_value(obs_stat = observed_f, direction = "greater")
+# Visualizing the null distributions and test statistic
+null_dist |> visualize(method="both") + shade_p_value(observed_f, direction = "greater")
+
+
+penguins <- penguins %>%
+  mutate(year_chr =  case_when(
+     year == 2007 ~ "seven",
+     year == 2008 ~ "eight",
+     year == 2009 ~ "nine"))
+
+observed_f <- penguins |>
+specify(body_mass ~ as.factor(year_chr)) |>
+hypothesize(null = "independence") |>
+calculate(stat = "F")
+# Generating the null distribution using randomization
+
+null_dist <- penguins |>
+specify(body_mass  ~ as.factor(year_chr)) |>
+hypothesize(null = "independence") |>
+generate(reps = 5000, type = "permute") |>
+calculate(stat = "F")
+
+# Randomization-based p-value
+null_dist |> get_p_value(obs_stat = observed_f, direction = "greater")
+# Visualizing the null distributions and test statistic
+null_dist |> visualize(method="both") + shade_p_value(observed_f, direction = "greater")
+
+
+
+```
+
+No surprising results here (particularly since we already looked at the outputs in class). The species version generates an enormous p-value while the year version generates a very small one.  The following chunk uses the built in base-R function to do the same computation, so unsurprisingly we get similar results: 
+```{r penguin_linear}
+oneway.test(body_mass ~ as.factor(species), data=penguins,  var.equal = TRUE )
+
+oneway.test(body_mass ~ as.factor(year), data=penguins,  var.equal = TRUE )
+
+```
+
+
+
+
